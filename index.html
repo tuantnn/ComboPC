@@ -586,7 +586,6 @@
 
       <div class="filter-bar">
         <label><input type="checkbox" id="chkOnlyActivePromo" checked onchange="runAnalysis()" /> Chỉ hiện CTKM còn hiệu lực (chưa hết hạn / chưa dừng)</label>
-        <label><input type="checkbox" id="chkOnlyValidUpgrade" onchange="runAnalysis()" /> Ẩn cấu hình hạ cấp / lệch DDR</label>
         <label><input type="checkbox" id="chkOnlyActiveCombo" checked onchange="runAnalysis()" /> Chỉ hiện mã MB đang mở bán (chưa khoá)</label>
       </div>
     </div>
@@ -1127,15 +1126,8 @@
 
       const specSummary = `Chuẩn: ${combo.cpu}${combo.vga ? " + " + combo.vga : ""} • RAM ${combo.ram_gb}GB ${combo.ram_type} • SSD ${formatCapacity(combo.ssd_gb)}`;
 
-      if (ddrMismatch || isDowngrade) {
-        return {
-          tier: "partial",
-          badgeText: "⚠️ LỆCH / HẠ CẤU HÌNH",
-          badgeClass: "badge-amber",
-          note: `${diffs.join(" • ")} | ${specSummary}`,
-          score
-        };
-      }
+      // Lệch chuẩn DDR hoặc hạ cấu hình: loại hoàn toàn, không gợi ý
+      if (ddrMismatch || isDowngrade) return null;
 
       if (diffs.length === 0) {
         return {
@@ -1222,7 +1214,6 @@
       }
 
       const onlyActivePromo = document.getElementById("chkOnlyActivePromo").checked;
-      const onlyValidUpgrade = document.getElementById("chkOnlyValidUpgrade").checked;
       const onlyActiveCombo = document.getElementById("chkOnlyActiveCombo").checked;
 
       let matches = [];
@@ -1230,7 +1221,6 @@
         if (onlyActiveCombo && combo.stopped) continue;
         const evalRes = evaluateComboMatch(build, combo);
         if (!evalRes) continue;
-        if (onlyValidUpgrade && evalRes.tier === "partial") continue;
 
         const promos = getPromosForSku(combo.sku, onlyActivePromo);
         let primaryDiscount = 0;
@@ -1258,7 +1248,7 @@
         matches = matches.filter(m => m.evalRes.tier !== "upgrade");
       }
 
-      const tierRank = { exact: 1, upgrade: 2, partial: 3 };
+      const tierRank = { exact: 1, upgrade: 2 };
       matches.sort((a, b) => {
         if (tierRank[a.evalRes.tier] !== tierRank[b.evalRes.tier]) {
           return tierRank[a.evalRes.tier] - tierRank[b.evalRes.tier];
@@ -1276,17 +1266,12 @@
       if (matches.length === 0) {
         html += `
           <div class="empty-state">
-            <strong>Không tìm thấy mã Combo <code>MB.*</code> khớp với CPU "${build.cpu || "?"}"${build.vga ? " + VGA " + build.vga : ""}.</strong><br/>
-            <span style="font-size:12.5px;">Kiểm tra lại mã CPU/VGA nhập vào, hoặc xem gợi ý mã <code>Ck.Ban.*</code> trên linh kiện / Build PC 7 món bên dưới.</span>
+            <strong>Không có mã Combo <code>MB.*</code> phù hợp với cấu hình này.</strong><br/>
+            <span style="font-size:12.5px;">Vui lòng liên hệ trực tiếp để được xác nhận cấu hình và chương trình khuyến mãi áp dụng.</span>
           </div>
         `;
       } else {
         html += matches.map(m => renderComboCard(m)).join("");
-      }
-
-      const componentPromoHtml = renderComponentAnd7PartPromos(build, onlyActivePromo);
-      if (componentPromoHtml) {
-        html += componentPromoHtml;
       }
 
       container.innerHTML = html;
