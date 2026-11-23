@@ -849,9 +849,11 @@
       const a = parseCpuRank(buildCpu), b = parseCpuRank(comboCpu);
       if (!a || !b) return null;
       if ((a.series === "RYZEN") !== (b.series === "RYZEN")) return null;
-      if (a.series === "ULTRA" && b.series === "I") return a.tier >= b.tier ? "up" : null;
+      // Chỉ so trong cùng phân khúc: i3 với i3, i5 với i5 (Ryzen 5 với Ryzen 5...)
+      if (a.tier !== b.tier) return null;
+      if (a.series === "ULTRA" && b.series === "I") return "up";
       if (a.series === "I" && b.series === "ULTRA") return null;
-      return (a.tier >= b.tier && a.model >= b.model && (a.tier > b.tier || a.model > b.model)) ? "up" : null;
+      return a.model > b.model ? "up" : null;
     }
     function parseVgaRank(v) {
       const m = String(v || "").toUpperCase().match(/^(RTX|GTX|RX)\s*(\d{3,4})\s*(TI|SUPER|XT)?/);
@@ -1149,6 +1151,7 @@
           badgeText: "✅ MÃ ĐÃ NHẬP TRỰC TIẾP",
           badgeClass: "badge-green",
           note: "Tra cứu trực tiếp mã có trong danh sách nhập",
+          direct: true,
           score: 1000
         };
       }
@@ -1334,6 +1337,8 @@
         if (!evalRes) continue;
 
         const promos = getPromosForSku(combo.sku, onlyActivePromo);
+        // Cấu hình không có khuyến mãi thì không gợi ý (trừ khi sales nhập trực tiếp mã MB.*)
+        if (promos.length === 0 && !evalRes.direct) continue;
         // CTKM PC không cộng dồn với nhau: lấy 1 chương trình PC giảm cao nhất; ưu đãi khác (trả góp, mua kèm...) cộng thêm
         let primaryDiscount = 0;
         let otherDiscount = 0;
@@ -1396,7 +1401,7 @@
       if (matches.length === 0) {
         html += `
           <div class="empty-state">
-            <strong>Không có mã Combo <code>MB.*</code> phù hợp với cấu hình này.</strong><br/>
+            <strong>Không có mã Combo <code>MB.*</code> có khuyến mãi phù hợp với cấu hình này.</strong><br/>
             <span style="font-size:12.5px;">Vui lòng liên hệ trực tiếp để được xác nhận cấu hình và chương trình khuyến mãi áp dụng.</span>
           </div>
         `;
