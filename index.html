@@ -1274,6 +1274,9 @@
         html += matches.map(m => renderComboCard(m)).join("");
       }
 
+      const cpu7Html = renderComponentAnd7PartPromos(build, onlyActivePromo);
+      if (cpu7Html) html += cpu7Html;
+
       container.innerHTML = html;
     }
 
@@ -1423,71 +1426,80 @@
       `;
     }
 
+    // CTKM "Giảm giá CPU khi build PC 7 món / 7 linh kiện":
+    // chỉ nhận chương trình theo TÊN CTKM + đúng mã CPU khách nhập, và chỉ khi build đủ 7 món.
+    // Không suy từ mã Ck.Ban.* vì cùng một mã CK được dùng cho nhiều chương trình khác nhau.
+    const CPU_7PART_RE = /cpu[\s\S]*build\s*pc\s*7|build\s*pc\s*7[\s\S]*cpu/i;
+
     function renderComponentAnd7PartPromos(build, onlyActivePromo) {
+      if (!build.is7PartBuild || !build.cpu) return "";
+
       const pastedSkuSet = new Set(build.items.map(it => it.sku.toUpperCase()));
+      const cpuRows = MASTER_DATA.promos.filter(r =>
+        !r.sku.toUpperCase().startsWith("MB.") &&
+        CPU_7PART_RE.test(r.tenct || "") &&
+        (!onlyActivePromo || isPromoActive(r))
+      );
+
+      let rowsToUse = cpuRows.filter(r => pastedSkuSet.has(r.sku.toUpperCase()));
+      let isExact = true;
+      if (rowsToUse.length === 0) {
+        // Không có đúng mã CPU nhập: lấy cùng dòng CPU (khác Box/Tray) để sales tự kiểm tra lại
+        rowsToUse = cpuRows.filter(r => r.sku_cpu && r.sku_cpu.toUpperCase() === build.cpu.toUpperCase());
+        isExact = false;
+      }
+      if (rowsToUse.length === 0) return "";
+
       const grouped = new Map();
-
-      for (const r of MASTER_DATA.promos) {
-        if (r.sku.toUpperCase().startsWith("MB.")) continue;
-        const active = isPromoActive(r);
-        if (onlyActivePromo && !active) continue;
-
-        const isExactSku = pastedSkuSet.has(r.sku.toUpperCase());
-        const isCpuSpecMatch = Boolean(build.cpu && r.sku_cpu && r.sku_cpu.toUpperCase() === build.cpu.toUpperCase());
-
-        if (!isExactSku && !isCpuSpecMatch) continue;
-
+      for (const r of rowsToUse) {
         const key = `${r.mact}_${r.sku}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
-            mact: r.mact,
-            tenct: r.tenct,
-            to: r.to,
-            active,
-            partSku: r.sku,
-            partName: r.ten_mh,
-            isExactSku,
-            ckRows: [],
-            mbCpuCodes: [],
-            giaKm: r.gia_km
+            mact: r.mact, tenct: r.tenct, mota: r.mota, to: r.to,
+            active: isPromoActive(r), partSku: r.sku, partName: r.ten_mh,
+            ckRows: [], idCodes: []
           });
         }
         const g = grouped.get(key);
-        if (r.tang_sku && r.tang_sku.toUpperCase().startsWith("CK")) {
-          g.ckRows.push({ code: r.tang_sku, amount: r.discount });
-        } else if (r.tang_sku && r.tang_sku.toUpperCase().startsWith("MB.")) {
-          if (!g.mbCpuCodes.includes(r.tang_sku)) g.mbCpuCodes.push(r.tang_sku);
+        const tang = String(r.tang_sku || "");
+        if (tang.toUpperCase().startsWith("CK")) {
+          if (!g.ckRows.some(c => c.code === tang && c.amount === r.discount)) {
+            g.ckRows.push({ code: tang, amount: r.discount });
+          }
+        } else if (tang.toUpperCase().startsWith("MB.")) {
+          if (!g.idCodes.includes(tang)) g.idCodes.push(tang);
         }
       }
 
-      if (grouped.size === 0) return "";
-
-      const rows = Array.from(grouped.values()).map(g => {
+      const list = Array.from(grouped.values()).sort((a, b) => Number(b.active) - Number(a.active));
+      const rows = list.map(g => {
+        const total = g.ckRows.reduce((acc, c) => acc + (c.amount || 0), 0);
         const ckHtml = g.ckRows.length > 0
           ? g.ckRows.map(c => `
               <div style="margin-bottom:3px;">
                 <span class="ck-code">${c.code}</span>
                 <button type="button" class="btn btn-xs btn-outline" data-copy="${escapeHtmlAttr(c.code)}" onclick="copyText(this.dataset.copy)">Copy</button>
                 <span class="discount-amt">-${formatVND(c.amount)}</span>
-              </div>
-            `).join("")
-          : (g.giaKm > 0 ? `<span class="discount-amt">Giá KM: ${formatVND(g.giaKm)}</span>` : "-");
-
-        const mbHtml = g.mbCpuCodes.length > 0
-          ? g.mbCpuCodes.map(mc => `<span class="combo-sku" style="font-size:12.5px;">${mc}</span> <button type="button" class="btn btn-xs btn-outline" data-copy="${escapeHtmlAttr(mc)}" onclick="copyText(this.dataset.copy)">Copy</button>`).join("<br/>")
+              </div>`).join("")
           : "-";
-
+        const idHtml = g.idCodes.length > 0
+          ? g.idCodes.map(mc => `<span class="combo-sku" style="font-size:12.5px;">${mc}</span> <button type="button" class="btn btn-xs btn-outline" data-copy="${escapeHtmlAttr(mc)}" onclick="copyText(this.dataset.copy)">Copy</button>`).join("<br/>")
+          : "-";
+        const cond = String(g.mota || "").split("\n").map(x => x.trim()).filter(Boolean)
+          .map(x => escapeHtmlAttr(x)).join("<br/>");
         return `
           <tr>
             <td>
-              <strong>${g.tenct}</strong><br/>
+              <strong>${escapeHtmlAttr(g.tenct)}</strong><br/>
               <span style="font-size:11.5px; color:#64748b;">
-                Mã áp dụng: <code>${g.partSku}</code> ${g.isExactSku ? `<span class="badge badge-green" style="padding:1px 6px; font-size:10.5px;">Khớp mã nhập</span>` : `<span class="badge badge-blue" style="padding:1px 6px; font-size:10.5px;">Cùng CPU ${build.cpu}</span>`}
+                Mã CPU: <code>${g.partSku}</code>
+                ${isExact ? `<span class="badge badge-green" style="padding:1px 6px; font-size:10.5px;">Khớp mã nhập</span>` : `<span class="badge badge-amber" style="padding:1px 6px; font-size:10.5px;">Cùng dòng ${build.cpu}, khác mã (Box/Tray) — kiểm tra lại</span>`}
                 • Hạn: ${g.to || "Không giới hạn"}
               </span>
+              <div style="font-size:11.5px; color:#475569; margin-top:4px;">${cond}</div>
             </td>
-            <td>${mbHtml}</td>
-            <td>${ckHtml}</td>
+            <td>${idHtml}</td>
+            <td>${ckHtml}${g.ckRows.length > 1 ? `<div style="margin-top:4px;" class="discount-amt">Tổng: -${formatVND(total)}</div>` : ""}</td>
             <td style="width:120px;">${g.active ? `<span class="badge badge-green">Còn hiệu lực</span>` : `<span class="badge badge-red">Hết hạn</span>`}</td>
           </tr>
         `;
@@ -1495,14 +1507,14 @@
 
       return `
         <div class="result-group-title">
-          <span>🧩 Mã <code>Ck.Ban.*</code> trong file <code>v2</code> áp dụng trực tiếp cho Linh kiện / Build PC 7 món</span>
-          <span class="badge ${build.is7PartBuild ? "badge-green" : "badge-amber"}">${build.is7PartBuild ? "Đủ 7 món linh kiện (CPU, Main, RAM, VGA, SSD, Case, PSU)" : "Lưu ý ĐK CTKM (VD: đủ 7 món / kênh bán)"}</span>
+          <span>🧩 CTKM giảm giá CPU khi Build PC 7 món</span>
+          <span class="badge badge-green">Đủ 7 món linh kiện (CPU, Main, RAM, VGA, SSD, Case, PSU)</span>
         </div>
         <div class="combo-card" style="border-left-color:#6366f1;">
           <table class="promo-table">
             <thead>
               <tr>
-                <th>Chương trình khuyến mãi linh kiện / Build 7 món</th>
+                <th>Chương trình khuyến mãi</th>
                 <th>Mã định danh (<code>MB.CPU-*</code>)</th>
                 <th>Mã CK (<code>Ck.Ban.*</code>) &amp; Tiền giảm</th>
                 <th>Trạng thái</th>
