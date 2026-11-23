@@ -644,6 +644,21 @@
         .replace(/>/g, "&gt;");
     }
 
+    // Loại CTKM kênh sỉ / đại lý (chỉ giữ chương trình bán lẻ / online)
+    const WHOLESALE_RE = /kênh\s*sỉ|kenh\s*si(?![\p{L}])|bán\s*sỉ|(^|[^\p{L}])sỉ(?![\p{L}])|đại\s*lý|dai\s*ly/iu;
+    function isWholesalePromo(p) {
+      const name = String((p && p.tenct) || "").normalize("NFC");
+      if (WHOLESALE_RE.test(name)) return true;
+      // Mô tả: bỏ qua các dòng phủ định kiểu "không áp dụng cho kênh sỉ"
+      const lines = String((p && p.mota) || "").normalize("NFC").split(/[\n.;]/);
+      return lines.some(l => !/không|ngoại\s*trừ|trừ\s/i.test(l) && WHOLESALE_RE.test(l));
+    }
+    function stripWholesalePromos() {
+      if (MASTER_DATA && Array.isArray(MASTER_DATA.promos)) {
+        MASTER_DATA.promos = MASTER_DATA.promos.filter(p => !isWholesalePromo(p));
+      }
+    }
+
     function loadMasterData() {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
@@ -651,6 +666,7 @@
           const parsed = JSON.parse(saved);
           if (parsed && Array.isArray(parsed.combos) && parsed.combos.length > 0) {
             MASTER_DATA = parsed;
+            stripWholesalePromos();
             updateDataStatus("Dữ liệu Import tuỳ chỉnh");
             return;
           }
@@ -661,6 +677,7 @@
       try {
         const raw = document.getElementById("embeddedMasterData").textContent;
         MASTER_DATA = JSON.parse(raw);
+        stripWholesalePromos();
         updateDataStatus("Dữ liệu chuẩn nhúng sẵn");
       } catch (e) {
         console.error("Embedded JSON error:", e);
@@ -1132,7 +1149,7 @@
 
       return {
         tier: "upgrade",
-        badgeText: "⬆️ NÂNG CẤP HỢP LỆ",
+        badgeText: "🔽 COMBO THẤP HƠN CẤU HÌNH KHÁCH (DỰ PHÒNG)",
         badgeClass: "badge-blue",
         note: `${diffs.join(" • ")} | ${specSummary}${notes.length ? " (" + notes.join(", ") + ")" : ""}`,
         score
@@ -1208,7 +1225,7 @@
       const onlyValidUpgrade = document.getElementById("chkOnlyValidUpgrade").checked;
       const onlyActiveCombo = document.getElementById("chkOnlyActiveCombo").checked;
 
-      const matches = [];
+      let matches = [];
       for (const combo of MASTER_DATA.combos) {
         if (onlyActiveCombo && combo.stopped) continue;
         const evalRes = evaluateComboMatch(build, combo);
@@ -1233,6 +1250,12 @@
           primaryDiscount,
           maxTotalDiscount
         });
+      }
+
+      // Combo chuẩn THẤP hơn cấu hình khách: ẩn hẳn nếu đã có mã khớp 100%,
+      // chỉ giữ làm mã dự phòng khi không có mã khớp nào.
+      if (matches.some(m => m.evalRes.tier === "exact")) {
+        matches = matches.filter(m => m.evalRes.tier !== "upgrade");
       }
 
       const tierRank = { exact: 1, upgrade: 2, partial: 3 };
@@ -1686,10 +1709,12 @@
             });
           }
 
-          MASTER_DATA.promos = newPromos;
+          const retailPromos = newPromos.filter(p => !isWholesalePromo(p));
+          const removedWholesale = newPromos.length - retailPromos.length;
+          MASTER_DATA.promos = retailPromos;
           localStorage.setItem(STORAGE_KEY, JSON.stringify(MASTER_DATA));
           updateDataStatus("Dữ liệu Import tuỳ chỉnh");
-          document.getElementById("promoImportMsg").textContent = `✓ Đã nạp thành công ${newPromos.length} dòng CTKM từ ${file.name}`;
+          document.getElementById("promoImportMsg").textContent = `✓ Đã nạp thành công ${retailPromos.length} dòng CTKM từ ${file.name}` + (removedWholesale ? ` (đã loại ${removedWholesale} dòng kênh sỉ)` : "");
           runAnalysis();
         } catch (err) {
           alert("Lỗi đọc file Excel khuyến mãi: " + err.message);
