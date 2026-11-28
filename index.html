@@ -1194,7 +1194,8 @@
       const notes = [];
       let isDowngrade = false;
       let score = 100;
-      const upDims = new Set(); // các thành phần khách phải nâng so với combo (CPU / VGA / RAM / SSD)
+      const upDims = new Set(); // các thành phần khách phải nâng so với combo (CPU / VGA / RAM); SSD là ngoại lệ
+      let ssdUp = false;
 
       if (cpuRel === "up") {
         diffs.push(`Nâng CPU: ${combo.cpu} → ${build.cpu}`);
@@ -1239,7 +1240,7 @@
           score += 20;
         } else if (build.ssdGB > combo.ssd_gb) {
           diffs.push(`Nâng SSD: ${formatCapacity(combo.ssd_gb)} → ${formatCapacity(build.ssdGB)}`);
-          upDims.add("ssd");
+          ssdUp = true; // nâng SSD là ngoại lệ: không tính vào giới hạn "nâng 1 thành phần"
           score += 8;
         } else {
           isDowngrade = true;
@@ -1264,7 +1265,7 @@
       // Hạ cấu hình (CPU/VGA/RAM/SSD thấp hơn chuẩn combo): loại hoàn toàn, không gợi ý
       if (isDowngrade) return null;
 
-      // Chỉ nhận nâng cấp từ MỘT thành phần (CPU hoặc VGA hoặc RAM hoặc SSD); nâng từ 2 thành phần trở lên thì loại
+      // Chỉ nhận nâng cấp từ MỘT thành phần (CPU hoặc VGA hoặc RAM), nâng SSD thêm thì vẫn được; nâng từ 2 thành phần trở lên thì loại
       if (upDims.size > 1) return null;
 
       if (diffs.length === 0) {
@@ -1283,7 +1284,7 @@
         badgeClass: "badge-blue",
         note: `${diffs.join(" • ")} | ${specSummary}${notes.length ? " (" + notes.join(", ") + ")" : ""}`,
         score,
-        diffCount: upDims.size
+        diffCount: upDims.size + (ssdUp ? 0.5 : 0)
       };
     }
 
