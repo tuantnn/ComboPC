@@ -849,11 +849,13 @@
       const a = parseCpuRank(buildCpu), b = parseCpuRank(comboCpu);
       if (!a || !b) return null;
       if ((a.series === "RYZEN") !== (b.series === "RYZEN")) return null;
-      // Chỉ so trong cùng phân khúc: i3 với i3, i5 với i5 (Ryzen 5 với Ryzen 5...)
-      if (a.tier !== b.tier) return null;
+      // Khách phải có phân khúc >= combo; cùng phân khúc thì số hiệu phải cao hơn,
+      // phân khúc cao hơn thì số hiệu không được thấp hơn (so bảo thủ để không gợi ý nhầm)
+      if (a.tier < b.tier) return null;
       if (a.series === "ULTRA" && b.series === "I") return "up";
       if (a.series === "I" && b.series === "ULTRA") return null;
-      return a.model > b.model ? "up" : null;
+      if (a.tier === b.tier) return a.model > b.model ? "up" : null;
+      return a.model >= b.model ? "up" : null;
     }
     function parseVgaRank(v) {
       const m = String(v || "").toUpperCase().match(/^(RTX|GTX|RX)\s*(\d{3,4})\s*(TI|SUPER|XT)?/);
@@ -964,6 +966,18 @@
       return { cat: "Linh kiện / Khác", isPC: true, isPeripheral: false };
     }
 
+    // Số lượng đi kèm mã: "x2", "2x", "*2", "sl2", "SL 2", "sl:2", "(2)"...
+    function parseQtyToken(tok) {
+      const t = String(tok || "").toUpperCase().replace(/[()\[\]]/g, "");
+      const m = t.match(/^(?:SL|QTY|X|\*)?[:=]?(\d{1,2})(?:X|\*)?$/);
+      if (!m) return 0;
+      const q = parseInt(m[1], 10);
+      return q >= 1 && q <= 20 ? q : 0;
+    }
+    function isQtyLabel(tok) {
+      return /^(?:SL|QTY|X|\*)[:=]?$/i.test(String(tok || ""));
+    }
+
     function parseSalesInput(rawText) {
       const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       const items = [];
@@ -978,17 +992,19 @@
           if (/^[A-Za-z][A-Za-z0-9\-._]{2,}$/.test(tok) && tok.includes(".")) {
             sku = tok;
             if (i + 1 < tokens.length) {
-              const nextTok = tokens[i + 1].toUpperCase().replace(/^X|X$/g, "");
-              if (/^\d{1,2}$/.test(nextTok)) {
-                const q = parseInt(nextTok, 10);
-                if (q >= 1 && q <= 20) qty = q;
+              const q1 = parseQtyToken(tokens[i + 1]);
+              if (q1) qty = q1;
+              else if (isQtyLabel(tokens[i + 1]) && i + 2 < tokens.length) {
+                const q2 = parseQtyToken(tokens[i + 2]);
+                if (q2) qty = q2;
               }
             }
             if (qty === 1 && i > 0) {
-              const prevTok = tokens[i - 1].toUpperCase().replace(/^X|X$/g, "");
-              if (/^\d{1,2}$/.test(prevTok)) {
-                const q = parseInt(prevTok, 10);
-                if (q >= 1 && q <= 20) qty = q;
+              const qp = parseQtyToken(tokens[i - 1]);
+              if (qp) qty = qp;
+              else if (isQtyLabel(tokens[i - 1]) && i > 1) {
+                const qp2 = parseQtyToken(tokens[i - 2]);
+                if (qp2) qty = qp2;
               }
             }
             break;
@@ -1178,13 +1194,16 @@
       const notes = [];
       let isDowngrade = false;
       let score = 100;
+      const upDims = new Set(); // các thành phần khách phải nâng so với combo (CPU / VGA / RAM / SSD)
 
       if (cpuRel === "up") {
         diffs.push(`Nâng CPU: ${combo.cpu} → ${build.cpu}`);
+        upDims.add("cpu");
         score += 6;
       }
       if (vgaRel === "up") {
         diffs.push(`Nâng VGA: ${combo.vga} → ${build.vga}`);
+        upDims.add("vga");
         score += 6;
       }
 
@@ -1192,6 +1211,7 @@
       if (build.ramType && combo.ram_type && build.ramType !== combo.ram_type) {
         if (build.ramType === "DDR5" && combo.ram_type === "DDR4") {
           diffs.push(`Nâng RAM: ${combo.ram_type} → ${build.ramType}`);
+          upDims.add("ram");
           score += 6;
         } else {
           isDowngrade = true;
@@ -1205,6 +1225,7 @@
           score += 25;
         } else if (build.ramGB > combo.ram_gb) {
           diffs.push(`Nâng RAM: ${combo.ram_gb}GB → ${build.ramGB}GB`);
+          upDims.add("ram");
           score += 10;
         } else {
           isDowngrade = true;
@@ -1218,6 +1239,7 @@
           score += 20;
         } else if (build.ssdGB > combo.ssd_gb) {
           diffs.push(`Nâng SSD: ${formatCapacity(combo.ssd_gb)} → ${formatCapacity(build.ssdGB)}`);
+          upDims.add("ssd");
           score += 8;
         } else {
           isDowngrade = true;
@@ -1242,6 +1264,9 @@
       // Hạ cấu hình (CPU/VGA/RAM/SSD thấp hơn chuẩn combo): loại hoàn toàn, không gợi ý
       if (isDowngrade) return null;
 
+      // Chỉ nhận nâng cấp từ MỘT thành phần (CPU hoặc VGA hoặc RAM hoặc SSD); nâng từ 2 thành phần trở lên thì loại
+      if (upDims.size > 1) return null;
+
       if (diffs.length === 0) {
         return {
           tier: "exact",
@@ -1258,7 +1283,7 @@
         badgeClass: "badge-blue",
         note: `${diffs.join(" • ")} | ${specSummary}${notes.length ? " (" + notes.join(", ") + ")" : ""}`,
         score,
-        diffCount: diffs.length
+        diffCount: upDims.size
       };
     }
 
